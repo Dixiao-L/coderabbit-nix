@@ -1,0 +1,111 @@
+name: Update CodeRabbit Version
+
+on:
+  schedule:
+    # Run every hour
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for updates
+        id: check
+        run: |
+          # Get current version from package.nix
+          CURRENT_VERSION=$(grep 'version = "' package.nix | head -1 | sed 's/.*version = "\([^"]*\)".*/\1/')
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Get latest version from CodeRabbit
+          LATEST_VERSION=$(curl -sL https://cli.coderabbit.ai/releases/latest/VERSION | tr -d '[:space:]')
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+            echo "update_available=true" >> $GITHUB_OUTPUT
+            echo "Update available: $CURRENT_VERSION -> $LATEST_VERSION"
+          else
+            echo "update_available=false" >> $GITHUB_OUTPUT
+            echo "Already up to date: $CURRENT_VERSION"
+          fi
+
+      - name: Update version and hash
+        if: steps.check.outputs.update_available == 'true'
+        run: |
+          LATEST_VERSION="${{ steps.check.outputs.latest_version }}"
+
+          # Update version in package.nix
+          sed -i "s/version = \"[^\"]*\"/version = \"$LATEST_VERSION\"/" package.nix
+
+          # Calculate new hash for x86_64-linux
+          NEW_HASH=$(nix-prefetch-url "https://cli.coderabbit.ai/releases/$LATEST_VERSION/coderabbit-linux-x64.zip" 2>/dev/null)
+
+          # Update the hash in package.nix (for x86_64-linux)
+          sed -i "0,/sha256 = \"[^\"]*\"/s/sha256 = \"[^\"]*\"/sha256 = \"$NEW_HASH\"/" package.nix
+
+          # Verify the build works
+          nix build .#coderabbit --no-link
+
+      - name: Create Pull Request
+        if: steps.check.outputs.update_available == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update coderabbit to v${{ steps.check.outputs.latest_version }}"
+          title: "Update CodeRabbit to v${{ steps.check.outputs.latest_version }}"
+          body: |
+            ## Automated Update
+
+            Updates CodeRabbit CLI from `v${{ steps.check.outputs.current_version }}` to `v${{ steps.check.outputs.latest_version }}`.
+
+            ### Verification Steps
+            ```bash
+            # Test the build
+            nix build github:${{ github.repository }}#coderabbit
+
+            # Run the CLI
+            nix run github:${{ github.repository }}#coderabbit -- --help
+            ```
+
+            ### Changes
+            - Updated version number
+            - Updated SHA256 hash for x86_64-linux
+
+            ---
+            *This PR was automatically created by GitHub Actions.*
+          branch: update/coderabbit-v${{ steps.check.outputs.latest_version }}
+          delete-branch: true
+          labels: |
+            automated
+            update
+
+      - name: Auto-merge PR
+        if: steps.check.outputs.update_available == 'true'
+        run: |
+          gh pr merge --auto --squash "update/coderabbit-v${{ steps.check.outputs.latest_version }}" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## CodeRabbit Version Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current Version:** ${{ steps.check.outputs.current_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest Version:** ${{ steps.check.outputs.latest_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Update Available:** ${{ steps.check.outputs.update_available }}" >> $GITHUB_STEP_SUMMARY
