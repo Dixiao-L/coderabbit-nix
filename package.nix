@@ -6,13 +6,13 @@
 }:
 
 let
-  version = "0.3.10";
+  version = "0.3.11";
 
   # Platform-specific source URLs and hashes
   sources = {
     "x86_64-linux" = {
       url = "https://cli.coderabbit.ai/releases/${version}/coderabbit-linux-x64.zip";
-      sha256 = "1j06n23qzbiqis426ycbhkl0hxriwhxph4da5ab691g7818wg7ym";
+      sha256 = "0a0lfkcjrzrsfmx8mk3vbm386hcl2ww79qk3fvc89rgs6mq61br7";
     };
     "aarch64-linux" = {
       url = "https://cli.coderabbit.ai/releases/${version}/coderabbit-linux-arm64.zip";
